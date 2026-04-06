@@ -305,7 +305,10 @@ end
 
 -- COMBAT
 reg(makeSep("  ATAQUE", 10), "combat")
-reg(makeToggle("A", "Auto Attack", function(v) S.autoAttack = v end, 11), "combat")
+reg(makeToggle("A", "Auto Attack", function(v)
+    S.autoAttack = v
+end, 11), "combat")
+
 reg(makeCycle("V", "Velocidade",
     {{"MAXIMA",0.05},{"ALTA",0.1},{"MEDIA",0.2},{"BAIXA",0.35}},
     function(v) S.attackDelay = v end, 12), "combat")
@@ -394,8 +397,8 @@ spamBtn.MouseButton1Click:Connect(function()
 end)
 
 reg(makeSep("  UTILIDADES", 30), "combat")
-reg(makeToggle("F", "Anti-Freeze", function(v) S.antiFreeze = v end, 31), "combat")
-reg(makeToggle("X", "Remover FX", function(v) S.removeFX = v end, 32), "combat")
+reg(makeToggle("F", "Anti-Freeze (move durante skills)", function(v) S.antiFreeze = v end, 31), "combat")
+reg(makeToggle("X", "Remover FX (menos lag)", function(v) S.removeFX = v end, 32), "combat")
 
 -- HITBOX
 reg(makeSep("  HITBOX EXPANDER", 40), "hitbox")
@@ -430,7 +433,7 @@ reg(makeCycle("T", "Tamanho",
         end
     end, 42), "hitbox")
 
-reg(makeToggle("V", "Mostrar hitboxes", function(v)
+reg(makeToggle("O", "Mostrar hitboxes", function(v)
     for part, _ in pairs(hitboxCache) do
         pcall(function()
             if part and part.Parent then
@@ -454,6 +457,10 @@ reg(makeToggle("S", "Ativar Remote Spy", function(v)
             local args = {...}
             if S.spy and typeof(self) == "Instance" then
                 if method == "FireServer" or method == "InvokeServer" then
+                    -- Ignorar RequestHit no spy pra nao poluir
+                    if self.Name == "RequestHit" then
+                        return oldNC(self, ...)
+                    end
                     local e = string.format("[%s] %s > %s",
                         os.date("%H:%M:%S"), method, self.Name)
                     for i, a in ipairs(args) do
@@ -548,7 +555,7 @@ setTab("combat")
 tabBtns["combat"].BackgroundColor3 = Color3.fromRGB(25, 50, 120)
 tabBtns["combat"].TextColor3 = Color3.fromRGB(120, 180, 255)
 
--- LOOPS
+-- LOOP: Auto Attack
 task.spawn(function()
     while true do
         task.wait(S.attackDelay)
@@ -558,6 +565,7 @@ task.spawn(function()
     end
 end)
 
+-- LOOP: Spam Skills
 task.spawn(function()
     while true do
         task.wait(0.1)
@@ -571,17 +579,27 @@ task.spawn(function()
     end
 end)
 
+-- LOOP: Anti-Freeze (corrigido com rootanchored)
 task.spawn(function()
     while true do
-        task.wait(0.1)
+        task.wait(0.05)
         if S.antiFreeze then
             local char = player.Character
             if char then
                 local hum = char:FindFirstChild("Humanoid")
-                if hum then
-                    if hum.WalkSpeed < 8 then hum.WalkSpeed = 16 end
-                    if hum:GetState() == Enum.HumanoidStateType.None then
-                        pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
+                local root = char:FindFirstChild("HumanoidRootPart")
+                if hum and root then
+                    if root.Anchored then
+                        root.Anchored = false
+                    end
+                    if hum.WalkSpeed < 16 then
+                        hum.WalkSpeed = 32
+                    end
+                    if hum.JumpPower < 50 then
+                        hum.JumpPower = 50
+                    end
+                    if not hum.AutoRotate then
+                        hum.AutoRotate = true
                     end
                 end
             end
@@ -589,43 +607,53 @@ task.spawn(function()
     end
 end)
 
-local lastSpyCount = 0
-
-local function isPlrChar(m)
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p.Character == m then return true end
-    end
-    return false
-end
-
-RunService.Heartbeat:Connect(function()
-    if S.removeFX then
-        for _, o in ipairs(workspace:GetDescendants()) do
-            if o:IsA("ParticleEmitter") or o:IsA("Beam") or o:IsA("Trail") then
-                pcall(function() if o.Enabled then o.Enabled = false end end)
-            end
-        end
-    end
-
-    if S.hitbox then
-        for _, m in ipairs(workspace:GetChildren()) do
-            if m:IsA("Model") and m ~= player.Character and not isPlrChar(m) then
-                if m:FindFirstChild("Humanoid") then
-                    for _, p in ipairs(m:GetDescendants()) do
-                        if p:IsA("BasePart") and not hitboxCache[p] then
-                            hitboxCache[p] = {s=p.Size, t=p.Transparency, c=p.CanCollide}
-                            pcall(function()
-                                p.Size = Vector3.new(S.hitboxSize, S.hitboxSize, S.hitboxSize)
-                                p.Transparency = 1
-                                p.CanCollide = false
-                            end)
+-- LOOP: Hitbox (verifica NPCs a cada 0.5s, nao no Heartbeat)
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        if S.hitbox then
+            for _, m in ipairs(workspace:GetChildren()) do
+                if m:IsA("Model") and m ~= player.Character then
+                    local isPlr = false
+                    for _, p in ipairs(Players:GetPlayers()) do
+                        if p.Character == m then isPlr = true break end
+                    end
+                    if not isPlr and m:FindFirstChild("Humanoid") then
+                        for _, p in ipairs(m:GetDescendants()) do
+                            if p:IsA("BasePart") and not hitboxCache[p] then
+                                hitboxCache[p] = {s=p.Size, t=p.Transparency, c=p.CanCollide}
+                                pcall(function()
+                                    p.Size = Vector3.new(S.hitboxSize, S.hitboxSize, S.hitboxSize)
+                                    p.Transparency = 1
+                                    p.CanCollide = false
+                                end)
+                            end
                         end
                     end
                 end
             end
         end
     end
+end)
 
+-- REMOVE FX: usa DescendantAdded, muito mais leve que Heartbeat
+workspace.DescendantAdded:Connect(function(obj)
+    if not S.removeFX then return end
+    if obj:IsA("ParticleEmitter") or obj:IsA("Beam") or obj:IsA("Trail") then
+        pcall(function() obj.Enabled = false end)
+    end
+    if obj:IsA("BasePart") or obj:IsA("MeshPart") then
+        local name = obj.Name:lower()
+        if name:find("vfx") or name:find("effect") or
+           name:find("fx") or name:find("particle") then
+            pcall(function() obj:Destroy() end)
+        end
+    end
+end)
+
+-- SPY: atualiza log na tela
+local lastSpyCount = 0
+RunService.Heartbeat:Connect(function()
     if S.spy and #spyLogs ~= lastSpyCount then
         lastSpyCount = #spyLogs
         local last = spyLogs[#spyLogs]
